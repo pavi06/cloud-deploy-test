@@ -1,0 +1,12 @@
+# Keep secrets, local envs and junk out of the build context / image
+.env
+.env.*
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.claude/
+README.md
+flow.html
+*.pptx

@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars and fill in your values.
+# terraform.tfvars is gitignored — never commit real secrets.
+
+prefix   = "pavi-devopsagent"
+location = "eastus"
+
+# ---- Azure OpenAI (required) ----
+azure_openai_endpoint   = "https://your-resource.openai.azure.com/"
+azure_openai_api_key    = "your-azure-openai-key"
+azure_openai_deployment = "gpt-5"
+
+# ---- Optional overrides ----
+# min_replicas             = 1
+# max_replicas             = 3
+# cpu                      = 0.5
+# memory                   = "1Gi"
+# azure_openai_api_version = "2024-10-21"

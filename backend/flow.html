@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DevOps & Cloud Explainer Agent — Request Flow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --edge: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --azure: #2b88d8;
+    --azure-glow: rgba(43, 136, 216, 0.55);
+    --green: #3fb950;
+    --amber: #d29922;
+    --purple: #a371f7;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 50% -10%, #12263b 0%, var(--bg) 55%);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 16px 40px;
+  }
+  h1 { font-size: 22px; font-weight: 650; margin: 0 0 2px; }
+  .sub { color: var(--muted); font-size: 14px; margin-bottom: 22px; }
+
+  .stage {
+    position: relative;
+    width: 920px;
+    max-width: 100%;
+    height: 500px;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 16px;
+    overflow: hidden;
+  }
+  svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .wire { stroke: var(--edge); stroke-width: 2.5; fill: none; }
+  .wire.hot {
+    stroke: var(--azure);
+    stroke-dasharray: 8 8;
+    animation: dash 0.6s linear infinite;
+    filter: drop-shadow(0 0 6px var(--azure-glow));
+  }
+  @keyframes dash { to { stroke-dashoffset: -32; } }
+
+  .node {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    width: 168px;
+    padding: 14px 14px;
+    background: #0f1620;
+    border: 1.5px solid var(--edge);
+    border-radius: 12px;
+    text-align: center;
+    transition: border-color .25s, box-shadow .25s, transform .25s;
+  }
+  .node .ico { font-size: 24px; line-height: 1; }
+  .node .name { font-size: 14px; font-weight: 650; margin-top: 6px; }
+  .node .meta { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+  .node.active {
+    border-color: var(--azure);
+    box-shadow: 0 0 0 1px var(--azure), 0 0 22px var(--azure-glow);
+    transform: translate(-50%, -50%) scale(1.05);
+  }
+  .node.done { border-color: var(--green); }
+
+  .token {
+    position: absolute;
+    width: 16px; height: 16px;
+    margin: -8px 0 0 -8px;
+    border-radius: 50%;
+    background: var(--azure);
+    box-shadow: 0 0 14px 4px var(--azure-glow);
+    opacity: 0;
+    z-index: 5;
+  }
+
+  .caption {
+    width: 920px; max-width: 100%;
+    margin-top: 20px;
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-left: 4px solid var(--azure);
+    border-radius: 10px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 58px;
+  }
+  .step-num {
+    flex: 0 0 auto;
+    width: 30px; height: 30px;
+    border-radius: 50%;
+    background: var(--azure);
+    color: #fff;
+    font-weight: 700;
+    font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .caption .txt { font-size: 15px; }
+  .controls { margin-top: 16px; display: flex; gap: 10px; }
+  button {
+    background: #21262d; color: var(--text);
+    border: 1px solid var(--edge); border-radius: 8px;
+    padding: 8px 16px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { border-color: var(--azure); }
+  .tag { font-size: 11px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <h1>DevOps &amp; Cloud Explainer Agent</h1>
+  <div class="sub">How one <code>POST /ask</code> request flows through the system</div>
+
+  <div class="stage" id="stage">
+    <svg class="wires" id="wires" viewBox="0 0 920 500" preserveAspectRatio="none"></svg>
+    <div class="token" id="token"></div>
+    <!-- nodes injected by JS -->
+  </div>
+
+  <div class="caption">
+    <div class="step-num" id="stepNum">1</div>
+    <div class="txt" id="caption">Loading…</div>
+  </div>
+
+  <div class="controls">
+    <button id="playBtn">⏸ Pause</button>
+    <button id="restartBtn">↻ Restart</button>
+    <span class="tag" id="loopTag" style="align-self:center"></span>
+  </div>
+
+<script>
+// ---- Node layout (center coordinates within the 920x500 stage) ----
+const NODES = {
+  user:   { x: 110, y: 250, ico: "🧑‍💻", name: "You",           meta: "the learner" },
+  api:    { x: 315, y: 250, ico: "⚡",          name: "FastAPI",       meta: "POST /ask" },
+  agent:  { x: 520, y: 250, ico: "🤖",          name: "Agent loop",    meta: "agent.py" },
+  gpt:    { x: 770, y: 120, ico: "🧠",          name: "Azure OpenAI",  meta: "GPT model" },
+  ddg:    { x: 770, y: 385, ico: "🔎",          name: "web_search",    meta: "DuckDuckGo" },
+};
+
+// ---- Wires (undirected connections drawn behind nodes) ----
+const WIRES = [
+  ["user", "api"],
+  ["api", "agent"],
+  ["agent", "gpt"],
+  ["agent", "ddg"],
+];
+
+// ---- Animation steps: token travels from -> to, with a caption ----
+const STEPS = [
+  { from: "user",  to: "api",   text: "You send a question to POST /ask." },
+  { from: "api",   to: "agent", text: "FastAPI hands the question to the agent." },
+  { from: "agent", to: "gpt",   text: "The agent asks the GPT model (Azure OpenAI)." },
+  { from: "gpt",   to: "agent", text: "GPT needs fresh facts → it calls the web_search tool." },
+  { from: "agent", to: "ddg",   text: "The agent runs web_search against DuckDuckGo." },
+  { from: "ddg",   to: "agent", text: "DuckDuckGo returns live results (title, snippet, link)." },
+  { from: "agent", to: "gpt",   text: "The agent feeds those results back to GPT." },
+  { from: "gpt",   to: "agent", text: "GPT writes a grounded answer using the sources." },
+  { from: "agent", to: "api",   text: "The agent returns the finished answer." },
+  { from: "api",   to: "user",  text: "You get a clear answer — with source links. ✅" },
+];
+
+const stage = document.getElementById("stage");
+const wiresSvg = document.getElementById("wires");
+const token = document.getElementById("token");
+const captionEl = document.getElementById("caption");
+const stepNumEl = document.getElementById("stepNum");
+const loopTag = document.getElementById("loopTag");
+
+// Build wires
+const wireEls = {};
+for (const [a, b] of WIRES) {
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("x1", NODES[a].x); line.setAttribute("y1", NODES[a].y);
+  line.setAttribute("x2", NODES[b].x); line.setAttribute("y2", NODES[b].y);
+  line.setAttribute("class", "wire");
+  wiresSvg.appendChild(line);
+  wireEls[a + "-" + b] = line;
+  wireEls[b + "-" + a] = line;
+}
+
+// Build nodes
+const nodeEls = {};
+for (const key in NODES) {
+  const n = NODES[key];
+  const el = document.createElement("div");
+  el.className = "node";
+  // position by percentage so it scales with the responsive stage
+  el.style.left = (n.x / 920 * 100) + "%";
+  el.style.top = (n.y / 500 * 100) + "%";
+  el.innerHTML = `<div class="ico">${n.ico}</div><div class="name">${n.name}</div><div class="meta">${n.meta}</div>`;
+  stage.appendChild(el);
+  nodeEls[key] = el;
+}
+
+const easeInOut = t => t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2;
+const STEP_MS = 1150;
+const PAUSE_MS = 550;
+
+let stepIndex = 0;
+let loops = 0;
+let playing = true;
+let rafId = null;
+let segStart = null;
+
+function placeToken(px, py) {
+  token.style.left = (px / 920 * 100) + "%";
+  token.style.top = (py / 500 * 100) + "%";
+}
+
+function setActiveWire(a, b, on) {
+  const w = wireEls[a + "-" + b];
+  if (w) w.classList.toggle("hot", on);
+}
+
+function startStep(i) {
+  const s = STEPS[i];
+  captionEl.textContent = s.text;
+  stepNumEl.textContent = (i + 1);
+  // reset node states
+  Object.values(nodeEls).forEach(el => el.classList.remove("active"));
+  nodeEls[s.from].classList.add("active");
+  nodeEls[s.to].classList.add("active");
+  setActiveWire(s.from, s.to, true);
+  token.style.opacity = 1;
+  segStart = null;
+}
+
+function endStep(i) {
+  const s = STEPS[i];
+  setActiveWire(s.from, s.to, false);
+  nodeEls[s.to].classList.add("done");
+}
+
+function frame(ts) {
+  if (!playing) return;
+  const s = STEPS[stepIndex];
+  const A = NODES[s.from], B = NODES[s.to];
+  if (segStart === null) segStart = ts;
+  const t = Math.min(1, (ts - segStart) / STEP_MS);
+  const e = easeInOut(t);
+  placeToken(A.x + (B.x - A.x) * e, A.y + (B.y - A.y) * e);
+
+  if (t >= 1) {
+    endStep(stepIndex);
+    stepIndex++;
+    if (stepIndex >= STEPS.length) {
+      // finished a full loop
+      loops++;
+      loopTag.textContent = `completed ${loops} run${loops>1?"s":""} — the tool loop repeats until GPT has a final answer`;
+      token.style.opacity = 0;
+      setTimeout(() => {
+        Object.values(nodeEls).forEach(el => el.classList.remove("done", "active"));
+        stepIndex = 0;
+        if (playing) { startStep(0); rafId = requestAnimationFrame(frame); }
+      }, 900);
+      return;
+    }
+    setTimeout(() => {
+      if (playing) { startStep(stepIndex); rafId = requestAnimationFrame(frame); }
+    }, PAUSE_MS);
+    return;
+  }
+  rafId = requestAnimationFrame(frame);
+}
+
+function play() {
+  playing = true;
+  document.getElementById("playBtn").textContent = "⏸ Pause";
+  startStep(stepIndex);
+  rafId = requestAnimationFrame(frame);
+}
+function pause() {
+  playing = false;
+  document.getElementById("playBtn").textContent = "▶ Play";
+  cancelAnimationFrame(rafId);
+}
+function restart() {
+  cancelAnimationFrame(rafId);
+  stepIndex = 0; loops = 0; loopTag.textContent = "";
+  Object.values(nodeEls).forEach(el => el.classList.remove("done", "active"));
+  play();
+}
+
+document.getElementById("playBtn").onclick = () => playing ? pause() : play();
+document.getElementById("restartBtn").onclick = restart;
+
+// go
+play();
+</script>
+</body>
+</html>
