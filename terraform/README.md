@@ -33,13 +33,17 @@ Dedicated features.
   assign roles (Owner or User Access Administrator on the target scope)
 - An existing **Azure OpenAI** resource with a deployed model (e.g. `gpt-4o-mini`)
 
-## Setup
+## Step-by-step: from zero to deployed
 
-### 1. Authenticate
+These are the exact commands, in order, to set up, build the container image,
+and provision everything. Run them from the repo root.
+
+### 1. Authenticate to Azure
 
 ```bash
-az login
+az login                                        # opens a browser
 az account set --subscription "<your-subscription-id>"
+az account show                                 # confirm the right subscription
 ```
 
 ### 2. Configure variables
@@ -52,30 +56,57 @@ cp terraform.tfvars.example terraform.tfvars
 Edit `terraform.tfvars` and set at least:
 
 ```hcl
+prefix                  = "yourprefix"          # lowercase, 3-18 chars
+location                = "eastus"
 azure_openai_endpoint   = "https://your-resource.openai.azure.com/"
 azure_openai_api_key    = "your-azure-openai-key"
-azure_openai_deployment = "gpt-4o-mini"
+azure_openai_deployment = "gpt-5"
 ```
 
 > `terraform.tfvars` is gitignored. Keep the API key out of version control.
 
-### 3. Deploy
+### 3. Initialize Terraform
 
 ```bash
-terraform init
-terraform plan
-terraform apply
+terraform init                                  # downloads the azurerm provider
 ```
 
-`apply` will:
-1. Create the registry, network, identity, and environment.
-2. Run `az acr build` to build the image from `../backend/Dockerfile` **inside**
-   the registry and push it as `agentic-api:v1`.
-3. Start the Container App and expose it over HTTPS.
+### 4. Review the plan
+
+```bash
+terraform plan                                  # shows everything that will be created
+```
+
+### 5. Provision + build + push (one command)
+
+```bash
+terraform apply                                 # type "yes" to confirm
+```
+
+`apply` does the whole flow in dependency order:
+1. Creates the resource group, VNet/subnet, Log Analytics, ACR, and the
+   user-assigned identity (with the `AcrPull` role).
+2. Runs the **server-side container build** — no local Docker needed:
+   ```bash
+   az acr build \
+     --registry <prefix>acr<suffix> \
+     --image agentic-api:<source-hash> \
+     --file ../backend/Dockerfile \
+     ../backend
+   ```
+   The tag is a hash of the app source, so a new image is built and pushed
+   automatically whenever the code changes.
+3. Creates the Container Apps environment and the Container App, which pulls
+   the freshly-pushed image and exposes it over public HTTPS.
 
 Typical first run takes a few minutes (the ACR build dominates).
 
-### 4. Use it
+> **Note on the `--file` path:** it's `../backend/Dockerfile`, relative to the
+> `terraform/` directory where the provisioner runs — not just `Dockerfile`.
+> `az acr build` resolves `--file` against the current working directory, so a
+> bare `Dockerfile` would fail with `Unable to find 'Dockerfile'`.
+
+### 6. Use it
 
 Terraform prints the URLs on success:
 
@@ -99,21 +130,29 @@ curl -X POST "$APP/ask" \
 
 ## Deploying a new version of the app
 
-Change the code in `../backend`, then bump the tag and re-apply:
+Just change the code in `../backend` and re-apply — no manual tag bump needed:
 
 ```bash
-terraform apply -var="image_tag=v2"
+terraform apply
 ```
 
-The build reruns automatically when the Dockerfile, `requirements.txt`, or the
-Python source change. Using a unique tag per release (e.g. a git SHA) gives you
-immutable, rollback-friendly revisions.
+The image tag is a **content hash** of the app source (`Dockerfile`,
+`requirements.txt`, `main.py`, `agent.py`, `websearch.py`). When any of those
+files change, the hash changes, `az acr build` reruns, a new immutable image is
+pushed, and the Container App rolls out a new revision. Unchanged source =
+no rebuild.
+
+To force a rebuild without changing code (e.g. after fixing the build itself):
+
+```bash
+terraform apply -replace=null_resource.build_push
+```
 
 ## Common overrides
 
 | Variable | Default | Notes |
 | --- | --- | --- |
-| `prefix` | `devopsagent` | Name prefix; must be 3–18 lowercase alphanumerics (ACR rule) |
+| `prefix` | `pavdevopsagnt` | Name prefix; must be 3–18 lowercase alphanumerics starting with a letter (ACR rule) |
 | `location` | `eastus` | Azure region |
 | `min_replicas` | `1` | Set `0` to scale to zero (saves cost, adds cold starts) |
 | `max_replicas` | `3` | Upper scale-out bound |
