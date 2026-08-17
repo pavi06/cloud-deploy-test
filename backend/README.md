@@ -69,60 +69,67 @@ POST /ask  ──▶  agent.ask()  ──▶  Azure OpenAI Chat Completions (man
 
    Interactive API docs: http://127.0.0.1:8000/docs
 
-## Deploy to Azure (no CI/CD)
+## Containerize the backend
 
-Deploy straight to **Azure App Service** from your machine with the Azure CLI.
+The app ships as a container. The `Dockerfile` here uses a multi-stage build on
+`python:3.12-alpine`: the builder installs the deps into a venv, and the runtime
+stage copies just that venv + the app code and runs as a **non-root** user on
+**port 8000**. `.dockerignore` keeps `.env`, `.venv`, and caches out of the image.
 
-1. Log in and create the app (Linux, Python 3.12):
+### Build the image locally (optional — for testing on your machine)
 
-   ```bash
-   az login
+Requires Docker Desktop running.
 
-   az group create --name devops-agent-rg --location eastus
+```bash
+# from this backend/ directory
+docker build -t agentic-api:local .
+```
 
-   az appservice plan create \
-     --name devops-agent-plan \
-     --resource-group devops-agent-rg \
-     --sku B1 --is-linux
+### Test the container locally before deploying
 
-   az webapp create \
-     --resource-group devops-agent-rg \
-     --plan devops-agent-plan \
-     --name <your-unique-app-name> \
-     --runtime "PYTHON:3.12"
-   ```
+Run the image with your Azure OpenAI settings injected at runtime (never baked
+into the image):
 
-2. Set the Azure OpenAI settings and startup command:
+```bash
+docker run --rm -p 8000:8000 --env-file .env agentic-api:local
+```
 
-   ```bash
-   az webapp config appsettings set \
-     --resource-group devops-agent-rg \
-     --name <your-unique-app-name> \
-     --settings \
-       AZURE_OPENAI_ENDPOINT="https://your-resource.openai.azure.com/" \
-       AZURE_OPENAI_API_KEY="your-azure-openai-key" \
-       AZURE_OPENAI_DEPLOYMENT="your-gpt-deployment-name"
+Then, in another terminal, hit the same endpoints as the local run:
 
-   az webapp config set \
-     --resource-group devops-agent-rg \
-     --name <your-unique-app-name> \
-     --startup-file "python -m uvicorn main:app --host 0.0.0.0 --port 8000"
-   ```
+```bash
+curl -s http://127.0.0.1:8000/health          # {"status":"healthy"}
+curl -s http://127.0.0.1:8000/ready           # env + Azure reachability check
 
-3. Deploy the code from this folder:
+curl -s -X POST http://127.0.0.1:8000/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What is CI/CD and why does it matter?"}'
+```
 
-   ```bash
-   az webapp up \
-     --resource-group devops-agent-rg \
-     --name <your-unique-app-name> \
-     --runtime "PYTHON:3.12"
-   ```
+Docs UI: http://127.0.0.1:8000/docs. If `/ready` returns 503, your `.env` is
+missing a value or the Azure OpenAI endpoint isn't reachable.
 
-   > `az webapp up` zips the current directory and deploys it — no pipeline
-   > required. Re-run it any time you change the code.
+## Deploy to Azure Container Apps
 
-4. Your API is live at `https://<your-unique-app-name>.azurewebsites.net`
-   (check `/health` and `/docs`).
+The actual cloud deploy is handled by the **Terraform in [`../terraform`](../terraform)**.
+You do **not** need Docker locally for it — Terraform runs a **server-side build**
+with `az acr build`, which builds this `Dockerfile` inside Azure Container
+Registry and pushes it, then runs it on Azure Container Apps.
+
+```bash
+az login
+cd ../terraform
+cp terraform.tfvars.example terraform.tfvars   # fill in Azure OpenAI values
+terraform init
+terraform apply                                # builds the image + provisions everything
+```
+
+The image tag is a **content hash** of this backend's source (`Dockerfile`,
+`requirements.txt`, `main.py`, `agent.py`, `websearch.py`), so changing any of
+those files and re-running `terraform apply` automatically rebuilds, repushes,
+and rolls out a new Container App revision.
+
+See [`../terraform/README.md`](../terraform/README.md) for the full step-by-step,
+variables, and cleanup.
 
 ## Notes
 
